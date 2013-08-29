@@ -12,34 +12,34 @@ type Hotel struct {
 	Price            int
 }
 
-func (h *Hotel) Validate(v *rev.Validation) {
-	v.Check(h.Name,
-		rev.Required{},
-		rev.MaxSize{50},
-	).Key("hotel.Name")
+func (hotel *Hotel) Validate(v *revel.Validation) {
+	v.Check(hotel.Name,
+		revel.Required{},
+		revel.MaxSize{50},
+	)
 
-	v.MaxSize(h.Address, 100).Key("hotel.Address")
+	v.MaxSize(hotel.Address, 100)
 
-	v.Check(h.City,
-		rev.Required{},
-		rev.MaxSize{40},
-	).Key("hotel.City")
+	v.Check(hotel.City,
+		revel.Required{},
+		revel.MaxSize{40},
+	)
 
-	v.Check(h.State,
-		rev.Required{},
-		rev.MaxSize{6},
-		rev.MinSize{2},
-	).Key("hotel.State")
+	v.Check(hotel.State,
+		revel.Required{},
+		revel.MaxSize{6},
+		revel.MinSize{2},
+	)
 
-	v.Check(h.Zip,
-		rev.Required{},
-		rev.MaxSize{6},
-		rev.MinSize{5},
-	).Key("hotel.Zip")
+	v.Check(hotel.Zip,
+		revel.Required{},
+		revel.MaxSize{6},
+		revel.MinSize{5},
+	)
 
-	v.Check(h.Country,
-		rev.Required{},
-		rev.MaxSize{40},
-		rev.MinSize{2},
-	).Key("hotel.Country")
+	v.Check(hotel.Country,
+		revel.Required{},
+		revel.MaxSize{40},
+		revel.MinSize{2},
+	)
 }

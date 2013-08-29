@@ -1,4 +1,4 @@
-{{set "title" "Chat room" .}}
+{{set . "title" "Chat room"}}
 {{template "header.html" .}}
 
 <h1>WebSocket — You are now chatting as {{.user}}
@@ -42,14 +42,14 @@
 </div>
 
 <div id="newMessage">
-  <input type="text" id="message" autocomplete="off">
+  <input type="text" id="message" autocomplete="off" autofocus>
   <input type="submit" value="send" id="send">
 </div>
 
 <script type="text/javascript">
 
   // Create a socket
-  var socket = new WebSocket('ws://127.0.0.1:9000/websocket/room/socket?user={{.user}}')
+  var socket = new WebSocket('ws://'+window.location.host+'/websocket/room/socket?user={{.user}}')
 
   // Display a message
   var display = function(event) {

@@ -8,8 +8,8 @@ import (
 type Event struct {
 	Type      string // "join", "leave", or "message"
 	User      string
-	Timestamp int    // Unix timestmap (secs)
-	Text      string // What the user said (if Type == "say")
+	Timestamp int    // Unix timestamp (secs)
+	Text      string // What the user said (if Type == "message")
 }
 
 type Subscription struct {
@@ -50,16 +50,15 @@ const archiveSize = 10
 var (
 	// Send a channel here to get room events back.  It will send the entire
 	// archive initially, and then new messages as they come in.
-	subscribe = make(chan (chan<- Subscription))
+	subscribe = make(chan (chan<- Subscription), 10)
 	// Send a channel here to unsubscribe.
-	unsubscribe = make(chan (<-chan Event))
+	unsubscribe = make(chan (<-chan Event), 10)
 	// Send events here to publish them.
-	publish = make(chan Event)
+	publish = make(chan Event, 10)
 )
 
 // This function loops forever, handling the chat room pubsub
 func chatroom() {
-	// subscribers := map[string]chan<-Event  // map user to channel
 	archive := list.New()
 	subscribers := list.New()
 
@@ -70,7 +69,7 @@ func chatroom() {
 			for e := archive.Front(); e != nil; e = e.Next() {
 				events = append(events, e.Value.(Event))
 			}
-			subscriber := make(chan Event)
+			subscriber := make(chan Event, 10)
 			subscribers.PushBack(subscriber)
 			ch <- Subscription{events, subscriber}
 
@@ -87,6 +86,7 @@ func chatroom() {
 			for ch := subscribers.Front(); ch != nil; ch = ch.Next() {
 				if ch.Value.(chan Event) == unsub {
 					subscribers.Remove(ch)
+					break
 				}
 			}
 		}

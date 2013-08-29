@@ -1,16 +1,36 @@
-language: erlang # wither art thou, Go?
-
+language: go
+go: 1.1
+services:
+  - memcache # github.com/robfig/revel/cache
 install:
- - hg clone -r go1 https://code.google.com/p/go $HOME/go
- - cd $HOME/go/src && ./make.bash
- - mkdir -p $HOME/src || true
- - mkdir -p $HOME/bin || true
- - mkdir -p $HOME/pkg || true
- - export GOPATH=$HOME
- - export PATH=$PATH:$HOME/go/bin
- - go get -v github.com/robfig/revel
- - ln -s $HOME/builds/robfig/revel $HOME/src/github.com/robfig/revel
-
+  - export PATH=$PATH:$HOME/gopath/bin
+  # Annoyingly, we can not use go get revel/... because references to app/routes package fail
+  - go get -v github.com/robfig/revel/revel
+  - go get -v github.com/robfig/revel/cache
+  - go get -v github.com/robfig/revel/harness
+  - go get -v github.com/coopernurse/gorp
+  - go get -v code.google.com/p/go.crypto/bcrypt
+  - go get -v github.com/mattn/go-sqlite3
+  - go get -v github.com/robfig/cron
+  - go get -v github.com/robfig/goauth2/oauth
+  - go get -v github.com/mrjones/oauth
 script:
- - cd $HOME/src/github.com/robfig/revel && go build -v .
- - cd $HOME/src/github.com/robfig/revel && go test -v .
+  - go test github.com/robfig/revel
+  - go test github.com/robfig/revel/cache
+  - go test github.com/robfig/revel/harness
+
+  # Ensure the new-app flow works (plus the other commands).
+  - revel new     my/testapp
+  - revel test    my/testapp
+  - revel clean   my/testapp
+  - revel build   my/testapp build/testapp
+  - revel package my/testapp
+
+  # Build & run the sample apps
+  - revel test github.com/robfig/revel/samples/booking
+  - revel test github.com/robfig/revel/samples/chat
+  - revel test github.com/robfig/revel/samples/facebook-oauth2
+  - revel test github.com/robfig/revel/samples/twitter-oauth
+  - revel test github.com/robfig/revel/samples/validation
+  - revel test github.com/robfig/revel/samples/chat
+

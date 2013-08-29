@@ -1,4 +1,4 @@
-package rev
+package revel
 
 import (
 	"bytes"
@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"reflect"
+	"strconv"
+	"time"
 )
 
 type Result interface {
@@ -20,7 +23,7 @@ type Result interface {
 // If RunMode is "dev", this results in a friendly error page.
 type ErrorResult struct {
 	RenderArgs map[string]interface{}
-	error
+	Error      error
 }
 
 func (r ErrorResult) Apply(req *Request, resp *Response) {
@@ -45,7 +48,7 @@ func (r ErrorResult) Apply(req *Request, resp *Response) {
 	showPlaintext := func(err error) {
 		PlaintextErrorResult{fmt.Errorf("Server Error:\n%s\n\n"+
 			"Additionally, an error occurred when rendering the error page:\n%s",
-			r.error, err)}.Apply(req, resp)
+			r.Error, err)}.Apply(req, resp)
 	}
 
 	if tmpl == nil {
@@ -58,7 +61,7 @@ func (r ErrorResult) Apply(req *Request, resp *Response) {
 
 	// If it's not a revel error, wrap it in one.
 	var revelError *Error
-	switch e := r.error.(type) {
+	switch e := r.Error.(type) {
 	case *Error:
 		revelError = e
 	case error:
@@ -72,6 +75,9 @@ func (r ErrorResult) Apply(req *Request, resp *Response) {
 		panic("no error provided")
 	}
 
+	if r.RenderArgs == nil {
+		r.RenderArgs = make(map[string]interface{})
+	}
 	r.RenderArgs["RunMode"] = RunMode
 	r.RenderArgs["Error"] = revelError
 	r.RenderArgs["Router"] = MainRouter
@@ -91,13 +97,13 @@ func (r ErrorResult) Apply(req *Request, resp *Response) {
 }
 
 type PlaintextErrorResult struct {
-	error
+	Error error
 }
 
 // This method is used when the template loader or error template is not available.
 func (r PlaintextErrorResult) Apply(req *Request, resp *Response) {
 	resp.WriteHeader(http.StatusInternalServerError, "text/plain")
-	resp.Out.Write([]byte(r.Error()))
+	resp.Out.Write([]byte(r.Error.Error()))
 }
 
 // Action methods return this result to request a template be rendered.
@@ -107,50 +113,111 @@ type RenderTemplateResult struct {
 }
 
 func (r *RenderTemplateResult) Apply(req *Request, resp *Response) {
-	// Render the template into a temporary buffer, to see if there was an error
-	// rendering the template.  If not, then copy it into the response buffer.
-	// TODO: It seems a shame to make a copy of everything, but if we don't,
-	// template errors result in unpredictable HTML for error pages.
-	var b bytes.Buffer
-	err := r.Template.Render(&b, r.RenderArgs)
-	if err != nil {
-		line, description := parseTemplateError(err)
-		compileError := &Error{
-			Title:       "Template Execution Error",
-			Path:        r.Template.Name(),
-			Description: description,
-			Line:        line,
-			SourceLines: r.Template.Content(),
-			SourceType:  "template",
+	// Handle panics when rendering templates.
+	defer func() {
+		if err := recover(); err != nil {
+			ERROR.Println(err)
+			PlaintextErrorResult{fmt.Errorf("Template Execution Panic in %s:\n%s",
+				r.Template.Name(), err)}.Apply(req, resp)
 		}
-		ErrorResult{r.RenderArgs, compileError}.Apply(req, resp)
+	}()
+
+	chunked := Config.BoolDefault("results.chunked", false)
+
+	// If it's a HEAD request, throw away the bytes.
+	out := io.Writer(resp.Out)
+	if req.Method == "HEAD" {
+		out = ioutil.Discard
+	}
+
+	// In a prod mode, write the status, render, and hope for the best.
+	// (In a dev mode, always render to a temporary buffer first to avoid having
+	// error pages distorted by HTML already written)
+	if chunked && !DevMode {
+		resp.WriteHeader(http.StatusOK, "text/html")
+		r.render(req, resp, out)
 		return
 	}
 
+	// Render the template into a temporary buffer, to see if there was an error
+	// rendering the template.  If not, then copy it into the response buffer.
+	// Otherwise, template render errors may result in unpredictable HTML (and
+	// would carry a 200 status code)
+	var b bytes.Buffer
+	r.render(req, resp, &b)
+	if !chunked {
+		resp.Out.Header().Set("Content-Length", strconv.Itoa(b.Len()))
+	}
 	resp.WriteHeader(http.StatusOK, "text/html")
-	b.WriteTo(resp.Out)
+	b.WriteTo(out)
+}
+
+func (r *RenderTemplateResult) render(req *Request, resp *Response, wr io.Writer) {
+	err := r.Template.Render(wr, r.RenderArgs)
+	if err == nil {
+		return
+	}
+
+	var templateContent []string
+	templateName, line, description := parseTemplateError(err)
+	if templateName == "" {
+		templateName = r.Template.Name()
+		templateContent = r.Template.Content()
+	} else {
+		if tmpl, err := MainTemplateLoader.Template(templateName); err == nil {
+			templateContent = tmpl.Content()
+		}
+	}
+	compileError := &Error{
+		Title:       "Template Execution Error",
+		Path:        templateName,
+		Description: description,
+		Line:        line,
+		SourceLines: templateContent,
+	}
+	resp.Status = 500
+	ERROR.Printf("Template Execution Error (in %s): %s", templateName, description)
+	ErrorResult{r.RenderArgs, compileError}.Apply(req, resp)
+}
+
+type RenderHtmlResult struct {
+	html string
+}
+
+func (r RenderHtmlResult) Apply(req *Request, resp *Response) {
+	resp.WriteHeader(http.StatusOK, "text/html")
+	resp.Out.Write([]byte(r.html))
 }
 
 type RenderJsonResult struct {
-	obj interface{}
+	obj      interface{}
+	callback string
 }
 
 func (r RenderJsonResult) Apply(req *Request, resp *Response) {
 	var b []byte
 	var err error
-	if RunMode == DEV {
+	if Config.BoolDefault("results.pretty", false) {
 		b, err = json.MarshalIndent(r.obj, "", "  ")
 	} else {
 		b, err = json.Marshal(r.obj)
 	}
 
 	if err != nil {
-		ErrorResult{error: err}.Apply(req, resp)
+		ErrorResult{Error: err}.Apply(req, resp)
 		return
 	}
 
-	resp.WriteHeader(http.StatusOK, "application/json")
+	if r.callback == "" {
+		resp.WriteHeader(http.StatusOK, "application/json")
+		resp.Out.Write(b)
+		return
+	}
+
+	resp.WriteHeader(http.StatusOK, "application/javascript")
+	resp.Out.Write([]byte(r.callback + "("))
 	resp.Out.Write(b)
+	resp.Out.Write([]byte(");"))
 }
 
 type RenderXmlResult struct {
@@ -160,15 +227,14 @@ type RenderXmlResult struct {
 func (r RenderXmlResult) Apply(req *Request, resp *Response) {
 	var b []byte
 	var err error
-	// TODO: Extract indent to app.conf
-	if RunMode == DEV {
+	if Config.BoolDefault("results.pretty", false) {
 		b, err = xml.MarshalIndent(r.obj, "", "  ")
 	} else {
 		b, err = xml.Marshal(r.obj)
 	}
 
 	if err != nil {
-		ErrorResult{error: err}.Apply(req, resp)
+		ErrorResult{Error: err}.Apply(req, resp)
 		return
 	}
 
@@ -197,20 +263,32 @@ type BinaryResult struct {
 	Name     string
 	Length   int64
 	Delivery ContentDisposition
+	ModTime  time.Time
 }
 
 func (r *BinaryResult) Apply(req *Request, resp *Response) {
 	disposition := string(r.Delivery)
 	if r.Name != "" {
-		disposition += fmt.Sprintf("; filename=%s;", r.Name)
+		disposition += fmt.Sprintf("; filename=%s", r.Name)
 	}
 	resp.Out.Header().Set("Content-Disposition", disposition)
 
-	if r.Length != -1 {
-		resp.Out.Header().Set("Content-Length", fmt.Sprintf("%d", r.Length))
+	// If we have a ReadSeeker, delegate to http.ServeContent
+	if rs, ok := r.Reader.(io.ReadSeeker); ok {
+		http.ServeContent(resp.Out, req.Request, r.Name, r.ModTime, rs)
+	} else {
+		// Else, do a simple io.Copy.
+		if r.Length != -1 {
+			resp.Out.Header().Set("Content-Length", strconv.FormatInt(r.Length, 10))
+		}
+		resp.WriteHeader(http.StatusOK, ContentTypeByFilename(r.Name))
+		io.Copy(resp.Out, r.Reader)
 	}
-	resp.WriteHeader(http.StatusOK, ContentTypeByFilename(r.Name))
-	io.Copy(resp.Out, r.Reader)
+
+	// Close the Reader if we can
+	if v, ok := r.Reader.(io.Closer); ok {
+		v.Close()
+	}
 }
 
 type RedirectToUrlResult struct {
@@ -230,7 +308,7 @@ func (r *RedirectToActionResult) Apply(req *Request, resp *Response) {
 	url, err := getRedirectUrl(r.val)
 	if err != nil {
 		ERROR.Println("Couldn't resolve redirect:", err.Error())
-		ErrorResult{error: err}.Apply(req, resp)
+		ErrorResult{Error: err}.Apply(req, resp)
 		return
 	}
 	resp.Out.Header().Set("Location", url)
@@ -249,7 +327,7 @@ func getRedirectUrl(item interface{}) (string, error) {
 	if typ.Kind() == reflect.Func && typ.NumIn() > 0 {
 		// Get the Controller Method
 		recvType := typ.In(0)
-		method := FindMethod(recvType, &val)
+		method := FindMethod(recvType, val)
 		if method == nil {
 			return "", errors.New("couldn't find method")
 		}
