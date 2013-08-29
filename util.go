@@ -1,11 +1,11 @@
-package rev
+package revel
 
 import (
 	"bytes"
 	"io"
 	"io/ioutil"
 	"net/url"
-	"path"
+	"os"
 	"reflect"
 	"regexp"
 	"strings"
@@ -51,12 +51,12 @@ func ContainsString(list []string, target string) bool {
 }
 
 // Return the reflect.Method, given a Receiver type and Func value.
-func FindMethod(recvType reflect.Type, funcVal *reflect.Value) *reflect.Method {
+func FindMethod(recvType reflect.Type, funcVal reflect.Value) *reflect.Method {
 	// It is not possible to get the name of the method from the Func.
 	// Instead, compare it to each method of the Controller.
 	for i := 0; i < recvType.NumMethod(); i++ {
 		method := recvType.Method(i)
-		if method.Func == *funcVal {
+		if method.Func.Pointer() == funcVal.Pointer() {
 			return &method
 		}
 	}
@@ -82,16 +82,16 @@ const DefaultFileContentType = "application/octet-stream"
 var mimeConfig *MergedConfig
 
 // Load mime-types.conf on init.
-func loadMimeConfig() {
+func LoadMimeConfig() {
 	var err error
-	mimeConfig, err = LoadConfig(path.Join(RevelPath, "conf", "mime-types.conf"))
+	mimeConfig, err = LoadConfig("mime-types.conf")
 	if err != nil {
 		ERROR.Fatalln("Failed to load mime type config:", err)
 	}
 }
 
 func init() {
-	InitHooks = append(InitHooks, loadMimeConfig)
+	OnAppStart(LoadMimeConfig)
 }
 
 // Returns a MIME content type based on the filename's extension.
@@ -104,11 +104,8 @@ func ContentTypeByFilename(filename string) string {
 	}
 
 	extension := filename[dot+1:]
-	contentType, err := mimeConfig.String(extension)
+	contentType := mimeConfig.StringDefault(extension, "")
 	if contentType == "" {
-		if err != nil {
-			WARN.Println(err)
-		}
 		return DefaultFileContentType
 	}
 
@@ -117,4 +114,59 @@ func ContentTypeByFilename(filename string) string {
 	}
 
 	return contentType
+}
+
+// DirExists returns true if the given path exists and is a directory.
+func DirExists(filename string) bool {
+	fileInfo, err := os.Stat(filename)
+	return err == nil && fileInfo.IsDir()
+}
+
+func FirstNonEmpty(strs ...string) string {
+	for _, str := range strs {
+		if len(str) > 0 {
+			return str
+		}
+	}
+	return ""
+}
+
+// Equal is a helper for comparing value equality, following these rules:
+//  - Values with equivalent types are compared with reflect.DeepEqual
+//  - int, uint, and float values are compared without regard to the type width.
+//    for example, Equal(int32(5), int64(5)) == true
+//  - strings and byte slices are converted to strings before comparison.
+//  - else, return false.
+func Equal(a, b interface{}) bool {
+	if reflect.TypeOf(a) == reflect.TypeOf(b) {
+		return reflect.DeepEqual(a, b)
+	}
+	switch a.(type) {
+	case int, int8, int16, int32, int64:
+		switch b.(type) {
+		case int, int8, int16, int32, int64:
+			return reflect.ValueOf(a).Int() == reflect.ValueOf(b).Int()
+		}
+	case uint, uint8, uint16, uint32, uint64:
+		switch b.(type) {
+		case uint, uint8, uint16, uint32, uint64:
+			return reflect.ValueOf(a).Uint() == reflect.ValueOf(b).Uint()
+		}
+	case float32, float64:
+		switch b.(type) {
+		case float32, float64:
+			return reflect.ValueOf(a).Float() == reflect.ValueOf(b).Float()
+		}
+	case string:
+		switch b.(type) {
+		case []byte:
+			return a.(string) == string(b.([]byte))
+		}
+	case []byte:
+		switch b.(type) {
+		case string:
+			return b.(string) == string(a.([]byte))
+		}
+	}
+	return false
 }

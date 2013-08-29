@@ -1,4 +1,4 @@
-{{set "title" "Chat room" .}}
+{{set . "title" "Chat room"}}
 {{template "header.html" .}}
 
 <h1>Ajax, long polling — You are now chatting as {{.user}}
@@ -34,7 +34,7 @@
 </div>
 
 <div id="newMessage">
-  <input type="text" id="message" autocomplete="off">
+  <input type="text" id="message" autocomplete="off" autofocus>
   <input type="submit" value="send" id="send">
 </div>
 

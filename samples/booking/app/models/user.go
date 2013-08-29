@@ -7,8 +7,10 @@ import (
 )
 
 type User struct {
-	UserId                   int
-	Username, Password, Name string
+	UserId             int
+	Name               string
+	Username, Password string
+	HashedPassword     []byte
 }
 
 func (u *User) String() string {
@@ -17,22 +19,27 @@ func (u *User) String() string {
 
 var userRegex = regexp.MustCompile("^\\w*$")
 
-func (u *User) Validate(v *rev.Validation) {
-	v.Check(u.Username,
-		rev.Required{},
-		rev.MaxSize{15},
-		rev.MinSize{4},
-		rev.Match{userRegex},
-	).Key("user.Username")
+func (user *User) Validate(v *revel.Validation) {
+	v.Check(user.Username,
+		revel.Required{},
+		revel.MaxSize{15},
+		revel.MinSize{4},
+		revel.Match{userRegex},
+	)
 
-	v.Check(u.Password,
-		rev.Required{},
-		rev.MaxSize{15},
-		rev.MinSize{5},
-	).Key("user.Password")
+	ValidatePassword(v, user.Password).
+		Key("user.Password")
 
-	v.Check(u.Name,
-		rev.Required{},
-		rev.MaxSize{100},
-	).Key("user.Name")
+	v.Check(user.Name,
+		revel.Required{},
+		revel.MaxSize{100},
+	)
+}
+
+func ValidatePassword(v *revel.Validation, password string) *revel.ValidationResult {
+	return v.Check(password,
+		revel.Required{},
+		revel.MaxSize{15},
+		revel.MinSize{5},
+	)
 }

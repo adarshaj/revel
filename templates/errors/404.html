@@ -5,9 +5,9 @@
 	</head>
 	<body>
 
-{{if eq .RunMode "dev"}}
+{{if .DevMode}}
 
-{{template "404-dev.html" .}}
+{{template "errors/404-dev.html" .}}
 
 {{else}}
 
